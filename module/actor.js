@@ -1,5 +1,6 @@
 import { createChanges } from './item.js';
 import { MODULE_ID, getSetting } from './settings.js';
+import { stripInjectedEffects } from './magic-item-effects.js';
 
 /**
  * Substitutes the create Actor method for a version wich:
@@ -16,6 +17,8 @@ async function create(data, context) {
 		const data = actor.toObject?.() ?? actor;
 		createData.push(data);
 		if (!data.items?.length) continue;
+		// Magic Items effects are in-memory copies; the new actor's items will receive their own.
+		data.items.forEach(stripInjectedEffects);
 		data._id = foundry.utils.randomID();
 		context.keepId = true;
 		const linked = data.items.filter((i) => MODULE_ID in i.flags && i.flags[MODULE_ID].isLinked);

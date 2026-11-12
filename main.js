@@ -11,6 +11,7 @@ import './module/actor.js';
 import './module/item-overrides.js';
 import './module/item-link-compendium-button.js';
 import './module/core.js';
+import './module/magic-items.js';
 
 Hooks.once('setup', async () => {
 	await initializeSystemSupport();
@@ -32,4 +33,6 @@ Hooks.once('ready', async () => {
 	Logger.log(`${Object.keys(derivations).length} data links derived`);
 	const hydrated = await LinkedItemResolver.hydrateAll();
 	Logger.log(`${hydrated} linked items hydrated`);
+	const injected = await LinkedItemResolver.refreshAllMagicItemEffects();
+	if (injected) Logger.log(`${injected} Magic Items hosts received passive effects`);
 });

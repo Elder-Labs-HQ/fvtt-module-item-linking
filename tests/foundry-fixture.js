@@ -64,7 +64,8 @@ export async function fixture() {
 	const settings = { linkHeader: true, linkPropertyExceptions: '', enforceActorsFXs: false };
 	const hooks = new Map();
 	const readyHooks = [];
-	const game = { actors: collection(), items: collection(), scenes: { contents: [] }, user: { id: 'gm', isGM: true } };
+	const game = { actors: collection(), items: collection(), scenes: { contents: [] }, user: { id: 'gm', isGM: true }, modules: new Map() };
+	const notifications = [];
 	class Document {
 		getFlag(moduleId, key) { return getProperty(this._source, `flags.${moduleId}.${key}`); }
 		get name() { return this._source.name; }
@@ -84,6 +85,7 @@ export async function fixture() {
 			this.items = collection((source.items ?? []).map((data) => new Item(data, this)));
 		}
 		static async createDocuments(data) { return data.map((source) => new Actor(source)); }
+		reset() { this.resets = (this.resets ?? 0) + 1; }
 	}
 	class Item extends Document {
 		static metadata = { embedded: { ActiveEffect: 'effects' } };
@@ -96,8 +98,11 @@ export async function fixture() {
 			this.id = source._id;
 			this.parent = parent;
 			this.uuid = parent ? `${parent.uuid}.Item.${this.id}` : `Item.${this.id}`;
+			this.isEmbedded = Boolean(parent);
 		}
+		get effects() { return [...(this._source.effects ?? [])]; }
 		updateSource(changes) { mergeObject(this._source, changes); }
+		async update(changes) { this.updates = [...(this.updates ?? []), changes]; mergeObject(this._source, changes); }
 		prepareFinalAttributes() {}
 	}
 	const documents = new Map();
@@ -110,7 +115,7 @@ export async function fixture() {
 		},
 	};
 	const context = vm.createContext({
-		console, structuredClone, game, randomID: () => 'copied-actor', fromUuid: async (uuid) => documents.get(uuid),
+		console, structuredClone, game, ui: { notifications: { warn: (m) => notifications.push(m), info: (m) => notifications.push(m) } }, randomID: () => 'copied-actor', fromUuid: async (uuid) => documents.get(uuid),
 		CONFIG: { Actor: { documentClass: Actor }, Item: { documentClass: Item } },
 		Hooks: {
 			on(name, callback) { const callbacks = hooks.get(name) ?? []; callbacks.push(callback); hooks.set(name, callbacks); },
@@ -122,6 +127,8 @@ export async function fixture() {
 				getType: (value) => value === null ? 'null' : Array.isArray(value) ? 'Array' : isObject(value) ? 'Object' : typeof value,
 				deepClone: structuredClone, randomID: () => 'copied-actor', getProperty, setProperty, expandObject, mergeObject, diffObject, flattenObject,
 				isEmpty: (value) => Object.keys(value).length === 0,
+				// Values cross the VM realm boundary, so compare them as same-realm clones.
+				objectsEqual: (a, b) => isDeepStrictEqual(structuredClone(a), structuredClone(b)),
 			},
 		},
 	});
@@ -155,5 +162,5 @@ export async function fixture() {
 	const data = await load('link-data.js');
 	const resolver = (await load('link-resolver.js')).default;
 	await load('core.js');
-	return { settings, hooks, readyHooks, game, Actor, Item, TextEditor, documents, data, resolver, load, mergeObject, context };
+	return { settings, hooks, readyHooks, game, notifications, Actor, Item, TextEditor, documents, data, resolver, load, mergeObject, context };
 }

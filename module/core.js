@@ -6,6 +6,7 @@ import { createEffectiveSource } from './link-data.js';
 import LinkedItemResolver from './link-resolver.js';
 import { MODULE_ID } from './settings.js';
 import { getLocalItemSource } from './utils.js';
+import { stripInjectedEffects } from './magic-item-effects.js';
 
 function toObject(source = true) {
 	const data = foundry.abstract.DataModel.prototype.toObject.call(this, source);
@@ -17,11 +18,13 @@ function toObject(source = true) {
 	) {
 		const baseSource = LinkedItemResolver.getCachedBaseSource(this.getFlag(MODULE_ID, 'baseItem'));
 		const localSource = this.parent?.token ? getLocalItemSource(this) : data;
-		if (baseSource) return this.constructor.shimData(createEffectiveSource(localSource, baseSource, false, {
+		if (baseSource) return this.constructor.shimData(stripInjectedEffects(createEffectiveSource(localSource, baseSource, false, {
 			origin: this.uuid,
 			preserveEffectState: this.parent instanceof CONFIG.Actor.documentClass,
-		}));
+		})));
 	}
+	// Magic Items effects exist in memory only; copies, exports and transfers must not persist them.
+	if (this instanceof CONFIG.Item.documentClass && !this.compendium) stripInjectedEffects(data);
 	// Only items are templates; other compendium documents keep their flags untouched.
 	if (
 		this instanceof CONFIG.Item.documentClass &&

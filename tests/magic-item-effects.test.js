@@ -126,10 +126,17 @@ test('linked hosts keep injected effects through re-linking and follow tab chang
 	assert(injected());
 	assert.equal(host._source.effects.filter((effect) => effect._id === injected()._id).length, 1);
 	assert(host._source.effects.some((effect) => effect._id === own._id));
-	// A value change, not a key removal: Foundry's diffObject never propagates removed keys to linked copies.
 	base._source.flags.magicitems.enabled = false;
 	await fx.resolver.refreshBaseItem(base, { render: false });
-	assert.equal(injected(), undefined);
+	assert.equal(injected(), undefined, 'disabling the tab removes it');
+	base._source.flags.magicitems.enabled = true;
+	await fx.resolver.refreshBaseItem(base, { render: false });
+	await new Promise(setImmediate);
+	assert(injected(), 're-enabling restores it');
+	// Removing the feature entry is a key removal, which must also reach the linked copy.
+	base._source.flags.magicitems.feats = {};
+	await fx.resolver.refreshBaseItem(base, { render: false });
+	assert.equal(injected(), undefined, 'removing the feature removes it');
 	assert(host._source.effects.some((effect) => effect._id === own._id));
 });
 

@@ -1,6 +1,6 @@
 import { MODULE_ID } from './settings.js';
 import { createEffectiveSource, createUnlinkUpdate, mergePendingUpdate } from './link-data.js';
-import { getLocalItemSource, isPrimaryItem } from './utils.js';
+import { deletionKeys, getLocalItemSource, isPrimaryItem } from './utils.js';
 import {
 	getMagicItemFeatureUuids,
 	isMagicItemHost,
@@ -13,6 +13,8 @@ import Logger from './lib/Logger.js';
 class LinkedItemResolver {
 	static #baseSources = new Map();
 	static #basePromises = new Map();
+	// Paths removed in memory because the template no longer has them; they may still be saved on the copy.
+	static #removedPaths = new WeakMap();
 
 	static isLinked(item) {
 		return Boolean(item?.getFlag?.(MODULE_ID, 'isLinked') && item?.getFlag?.(MODULE_ID, 'baseItem'));
@@ -106,7 +108,10 @@ class LinkedItemResolver {
 		});
 		// Magic Items effects are injected after linking; keep them so the diff does not remove them.
 		keepInjectedEffects(item._source, effective);
-		const changes = foundry.utils.diffObject(item._source, effective, { deletionKeys: true });
+		// Foundry's diffObject ignores keys that disappear, so removals from the template are added explicitly.
+		const deletions = deletionKeys(item._source, effective);
+		this.#recordRemovedPaths(item, deletions);
+		const changes = foundry.utils.mergeObject(deletions, foundry.utils.diffObject(item._source, effective));
 		let changed = false;
 		if (!foundry.utils.isEmpty(changes)) {
 			item.updateSource(changes, { recursive: true });
@@ -116,6 +121,18 @@ class LinkedItemResolver {
 		// The base item may have changed the Magic Item tab, so the injected set is recomputed here too.
 		if (this.syncMagicItemEffects(item, { loadMissing })) changed = true;
 		return changed;
+	}
+
+	static #recordRemovedPaths(item, deletions) {
+		const paths = Object.keys(foundry.utils.flattenObject(deletions)).map((path) => path.replace(/(^|\.)-=/g, '$1'));
+		if (!paths.length) return;
+		const recorded = this.#removedPaths.get(item) ?? new Set();
+		for (const path of paths) recorded.add(path);
+		this.#removedPaths.set(item, recorded);
+	}
+
+	static getRemovedPaths(item) {
+		return [...(this.#removedPaths.get(item) ?? [])];
 	}
 
 	static #getCachedFeature = (uuid) => this.getCachedBaseSource(uuid);
@@ -232,6 +249,7 @@ class LinkedItemResolver {
 		return createUnlinkUpdate(pending, baseSource, {
 			origin: item.uuid,
 			preserveEffectState: item.parent instanceof CONFIG.Actor.documentClass,
+			removedPaths: this.getRemovedPaths(item),
 		});
 	}
 

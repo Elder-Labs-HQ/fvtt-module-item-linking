@@ -33,14 +33,35 @@ function mergeObject(target, source, options = {}) {
 	return target;
 }
 
-function diffObject(before, after) {
-	const output = {};
-	for (const [key, value] of Object.entries(after)) {
-		if (isDeepStrictEqual(before[key], value)) continue;
-		output[key] = isObject(value) && isObject(before[key]) ? diffObject(before[key], value) : structuredClone(value);
+const typeOf = (value) => (value === null ? 'null' : Array.isArray(value) ? 'Array' : isObject(value) ? 'Object' : typeof value);
+const isEmptyObject = (value) => Object.keys(value).length === 0;
+
+// Mirrors Foundry v12's diffObject: keys missing from `after` are never reported as deletions, and an emptied
+// object is not a difference. Only explicit `-=` keys in `after` pass through with `deletionKeys`.
+function diffObject(before, after, { inner = false, deletionKeys = false } = {}) {
+	function difference(v0, v1) {
+		const t0 = typeOf(v0);
+		if (t0 !== typeOf(v1)) return [true, structuredClone(v1)];
+		if (t0 === 'null' || t0 === 'undefined') return [v0 !== v1, v1];
+		if (t0 === 'Array') return [!isDeepStrictEqual(structuredClone(v0), structuredClone(v1)), structuredClone(v1)];
+		if (t0 === 'Object') {
+			if (isEmptyObject(v1)) return [false, {}];
+			if (isEmptyObject(v0)) return [true, structuredClone(v1)];
+			const d = diffObject(v0, v1, { inner, deletionKeys });
+			return [!isEmptyObject(d), d];
+		}
+		return [v0 !== v1, v1];
 	}
-	for (const key of Object.keys(before)) if (!(key in after)) output[`-=${key}`] = null;
-	return output;
+	return Object.keys(after).reduce((output, key) => {
+		if (key.startsWith('-=') && deletionKeys) {
+			if (key.slice(2) in before) output[key] = after[key];
+			return output;
+		}
+		if (inner && !(key in before)) return output;
+		const [isDifferent, value] = difference(before[key], after[key]);
+		if (isDifferent) output[key] = value;
+		return output;
+	}, {});
 }
 
 function flattenObject(object, prefix = '', output = {}) {

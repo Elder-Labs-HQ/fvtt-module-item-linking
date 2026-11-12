@@ -27,6 +27,9 @@ export const KEEP = [
 	'system.levels',
 	'system.advancement',
 	'system.container',
+	// Set by advancement on each granted copy; level-down uses them to find the item again.
+	'flags.dnd5e.sourceId',
+	'flags.dnd5e.advancementOrigin',
 ];
 
 function createOptionsFromPack(pack, type, selected) {

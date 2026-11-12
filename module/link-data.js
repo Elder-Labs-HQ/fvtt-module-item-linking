@@ -5,6 +5,8 @@ import { deletionKeys } from './utils.js';
 const ALWAYS_LOCAL = [
 	`flags.${MODULE_ID}`,
 	'flags.beavers-crafting',
+	// Set on each copy when it is created, never on the template.
+	'flags.core.sourceId',
 	'_id',
 	'_stats',
 	'ownership',
@@ -122,9 +124,22 @@ export function createEffectiveSource(itemData, baseItemData, keepEmbedded = tru
 	return rewriteEmbeddedOrigins(effective, origin);
 }
 
-export function createUnlinkUpdate(itemData, baseItemData, { origin, preserveEffectState = false } = {}) {
+/**
+ * @param {string[]} [options.removedPaths] - Paths already removed from the copy in memory because the template
+ *   no longer has them. The saved copy may still hold them, so they are deleted unless the template has them again.
+ */
+export function createUnlinkUpdate(itemData, baseItemData, { origin, preserveEffectState = false, removedPaths = [] } = {}) {
 	const materialized = createEffectiveSource(itemData, baseItemData, false, { origin, preserveEffectState });
 	const update = foundry.utils.flattenObject(materialized);
+	// Keys the template no longer has must be deleted from the unlinked item, not left behind.
+	Object.assign(update, foundry.utils.flattenObject(deletionKeys(itemData, materialized)));
+	const deleted = removedPaths.filter((path) => foundry.utils.getProperty(materialized, path) === undefined);
+	for (const path of deleted) {
+		// Deleting an ancestor already removes this path; a nested deletion would recreate the ancestor empty.
+		if (deleted.some((other) => path.startsWith(`${other}.`))) continue;
+		const parts = path.split('.');
+		update[[...parts.slice(0, -1), `-=${parts.at(-1)}`].join('.')] = null;
+	}
 	update[`flags.${MODULE_ID}.baseItem`] = itemData.flags?.[MODULE_ID]?.baseItem ?? null;
 	update[`flags.${MODULE_ID}.isLinked`] = false;
 	return update;

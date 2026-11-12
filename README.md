@@ -18,6 +18,8 @@ In the setup screen, use the manifest URL https://raw.githubusercontent.com/eliz
 
 Compendium items become **Templates** and items can now be linked to them.
 
+Removing something from a template (for example a flag, or an entry in another module's item data) also removes it from linked items, and unlinking an item saves that removal. Data each copy gets when it is created, such as Foundry's `flags.core.sourceId` and dnd5e's `flags.dnd5e.sourceId` and `flags.dnd5e.advancementOrigin`, always stays with the copy.
+
 Dragging a linked item into chat, a journal editor, or a sheet text editor creates a UUID link to its base template, using the dragged item's name (or the editor's custom label). This applies to editors using Foundry's standard content-link creation. Inventory transfers still use the dragged item itself. Unlinked items use their own UUID, and existing text links are unchanged.
 
 Moving an item or folder to another compendium with **Relink Derived Items** checked also updates linked inventory items on actors in all unlocked world Actor compendiums. Packs are loaded for the move even if they have not been opened. Locked packs and packs supplied by modules or systems are skipped; compendium lock states are never changed. Unlock a world Actor compendium before moving to include it in the scan. If a link update fails, the original item or folder is retained; the destination copy and any completed link updates remain.

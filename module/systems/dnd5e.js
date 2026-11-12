@@ -244,24 +244,30 @@ function AFXcontextOptions(fx, buttons) {
 	}
 }
 
-async function magicItems2Hook(sheet, html) {
+// The module was renamed from "magic-items-2" to "magicitems" (v4), which also renamed its CSS classes.
+const MAGIC_ITEMS_IDS = ['magicitems', 'magic-items-2'];
+const MAGIC_ITEMS_TAB = '.tab.magicitems, .tidy-tab.magicitems, .tab.magic-items';
+const MAGIC_ITEMS_CONTENT = '.magicitems-content, .magic-items-content';
+
+// Capture phase runs before both the core DragDrop handler and Tidy5e's listener on the tab content.
+function blockMagicItemsDrop(event) {
+	event.preventDefault();
+	event.stopImmediatePropagation();
+}
+
+async function magicItemsHook(sheet, html) {
 	if (!html.jquery) html = $(html);
-	const tab = html.find('.tab.magic-items');
+	const tab = html.find(MAGIC_ITEMS_TAB);
 	if (tab.length) {
 		const item = sheet.item;
 		const linked = getFlag(item, 'isLinked');
 		if (linked && (!item.compendium || item.isEmbedded)) {
 			for (let i = 0; i < 20; i++) {
-				if (html.find('.magic-items-content').length) break;
+				if (tab.find(MAGIC_ITEMS_CONTENT).length) break;
 				await sleep(100);
 			}
 			tab.find('.spell-drag-content').remove();
-			const drop = sheet._dragDrop.filter((list) => list.dropSelector === '.tab.magic-items');
-			drop.forEach((drop) => {
-				Object.entries(drop.callbacks).forEach(([ev, fn]) => {
-					drop.callbacks[ev] = function () {};
-				});
-			});
+			tab.each((_idx, el) => el.addEventListener('drop', blockMagicItemsDrop, true));
 		}
 	}
 	renderItemSheet(sheet, html);
@@ -270,9 +276,9 @@ async function magicItems2Hook(sheet, html) {
 /** -------------------------------------------- */
 Hooks.on('renderActorSheet5e', renderActorSheet);
 Hooks.on('dnd5e.getActiveEffectContextOptions', AFXcontextOptions);
-if (game.modules.get('magic-items-2')?.active) {
-	Hooks.on('renderItemSheet', magicItems2Hook);
-	Hooks.on('tidy5e-sheet.renderItemSheet', magicItems2Hook);
+if (MAGIC_ITEMS_IDS.some((id) => game.modules.get(id)?.active)) {
+	Hooks.on('renderItemSheet', magicItemsHook);
+	Hooks.on('tidy5e-sheet.renderItemSheet', magicItemsHook);
 } else {
 	Hooks.on('renderItemSheet', renderItemSheet);
 	//Hooks.on('tidy5e-sheet.renderItemSheet', renderItemSheet);

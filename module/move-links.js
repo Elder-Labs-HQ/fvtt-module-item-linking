@@ -1,15 +1,20 @@
+import { isArchivePack, loadArchivedActors } from './archive-links.js';
 import { getFlag, setFlag } from './flags.js';
 import { findDerived } from './item.js';
 
-/** Find world derivations and linked inventory items in unlocked world Actor packs. */
+/**
+ * Find world derivations and linked inventory items in unlocked world Actor packs.
+ * Only archived actors whose index summary lists a moved item (or that were never synced) are loaded.
+ */
 export async function findMoveDerivations(baseUuids) {
 	const worldDerivations = findDerived();
 	const derivations = new Map([...baseUuids].map((uuid) => [
 		uuid, (worldDerivations[uuid] ?? []).map((item) => ({ item, pack: null })),
 	]));
+	const wanted = new Set(derivations.keys());
 	for (const pack of game.packs.values()) {
-		if (pack.documentName !== 'Actor' || pack.metadata.packageType !== 'world' || pack.locked) continue;
-		for (const actor of await pack.getDocuments()) {
+		if (!isArchivePack(pack) || pack.locked) continue;
+		for (const actor of await loadArchivedActors(pack, wanted)) {
 			for (const item of actor.items.contents) {
 				if (!getFlag(item, 'isLinked')) continue;
 				const matches = derivations.get(getFlag(item, 'baseItem'));

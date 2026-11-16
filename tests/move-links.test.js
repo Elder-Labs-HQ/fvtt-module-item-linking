@@ -9,22 +9,57 @@ const inventoryItem = (id, baseItem = oldUuid, isLinked = true) => ({
 	flags: { 'item-linking': { baseItem, isLinked, custom: 'preserved' } },
 });
 
-async function moveFixture({ locked = false, items = [inventoryItem('linked')] } = {}) {
+const linksOf = (items) => items
+	.filter((item) => item.flags['item-linking'].isLinked)
+	.map((item) => item.flags['item-linking'].baseItem)
+	.sort();
+
+/**
+ * A world Actor pack mock. `links` is the summary stored on each actor and its index entry:
+ * 'auto' mirrors the actor's inventory, null means the actor was never synced.
+ */
+function actorPack(fx, collection, sources, { locked = false, links = 'auto', event = 'load actors' } = {}) {
+	const pack = {
+		collection, documentName: 'Actor', locked, metadata: { packageType: 'world' },
+		actors: new Map(), index: new Map(), cache: new Map(), queries: [],
+		has: (id) => pack.cache.has(id),
+		get: (id) => pack.cache.get(id),
+		async getDocuments(query = {}) {
+			fx.events.push(event);
+			pack.queries.push(query._id__in);
+			return query._id__in.map((id) => pack.actors.get(id));
+		},
+		async configure() { assert.fail('compendium lock state was changed'); },
+	};
+	for (const source of sources) {
+		const summary = links === 'auto' ? linksOf(source.items) : links;
+		const flags = summary ? { 'item-linking': { links: summary } } : {};
+		const actor = new fx.Actor({ ...source, flags });
+		actor.compendium = pack;
+		pack.actors.set(actor.id, actor);
+		pack.index.set(actor.id, structuredClone({ _id: actor.id, flags }));
+	}
+	fx.game.packs.set(collection, pack);
+	return pack;
+}
+
+async function moveFixture({ locked = false, items = [inventoryItem('linked')], links = 'auto' } = {}) {
 	const fx = await fixture();
 	const events = [];
 	const notifications = [];
+	fx.events = events;
+	fx.context.foundry.utils.debounce = (callback) => callback;
 	fx.context.ui = { notifications: Object.fromEntries(['info', 'warn', 'error'].map((level) => [
 		level, (message) => notifications.push({ level, message }),
 	])) };
 	fx.game.packs = new Map();
-	const actor = new fx.Actor({ _id: 'stored-actor', items });
-	const pack = {
-		collection: 'world.logged-off-players', documentName: 'Actor', locked,
-		metadata: { packageType: 'world' },
-		async getDocuments() { events.push('load actors'); return [actor]; },
-		async configure() { assert.fail('compendium lock state was changed'); },
+	Object.defineProperty(fx.Actor.prototype, 'flags', { get() { return this._source.flags; } });
+	fx.Actor.updateDocuments = async (updates, { pack }) => {
+		events.push(`sync ${updates.map((update) => update._id).join(', ')}`);
+		for (const { _id, ...changes } of updates) fx.mergeObject(fx.game.packs.get(pack).actors.get(_id)._source, changes);
 	};
-	actor.compendium = pack;
+	const pack = actorPack(fx, 'world.logged-off-players', [{ _id: 'stored-actor', items }], { locked, links });
+	const actor = pack.actors.get('stored-actor');
 	for (const item of actor.items.values()) {
 		item.compendium = pack;
 		item.setFlag = async (scope, key, value) => {
@@ -36,7 +71,6 @@ async function moveFixture({ locked = false, items = [inventoryItem('linked')] }
 			return item;
 		};
 	}
-	fx.game.packs.set(pack.collection, pack);
 	const targetPack = {
 		collection: destination.pack,
 		getUuid: (id) => `Compendium.${destination.pack}.Item.${id}`,
@@ -104,10 +138,10 @@ test('relink disabled skips actor packs and their inventory updates', async () =
 	assert.deepEqual(fx.events, ['create destination', 'delete source']);
 });
 
-test('no matching links leaves actor inventory unchanged', async () => {
+test('no matching links leaves actor inventory unchanged without loading the actor', async () => {
 	const fx = await moveFixture({ items: [inventoryItem('unrelated', 'another-uuid')] });
 	await fx.moveItem(fx.template, destination, fx.processor);
-	assert.deepEqual(fx.events, ['load actors', 'create destination', 'delete source']);
+	assert.deepEqual(fx.events, ['create destination', 'delete source']);
 	assert.equal(fx.pack.locked, false);
 	assert.equal(fx.actor.items.get('unrelated').getFlag('item-linking', 'baseItem'), 'another-uuid');
 });
@@ -149,20 +183,46 @@ test('a locked world Actor pack with matching links is skipped', async () => {
 
 test('every unlocked world Actor pack is scanned without relying on collection IDs', async () => {
 	const fx = await moveFixture();
-	const secondActor = new fx.Actor({ _id: 'second-actor', items: [inventoryItem('second-inventory')] });
-	const secondItem = secondActor.items.get('second-inventory');
+	const second = actorPack(fx, 'world.arbitrary-name', [
+		{ _id: 'second-actor', items: [inventoryItem('second-inventory')] },
+	], { event: 'load second actors' });
+	const secondItem = second.actors.get('second-actor').items.get('second-inventory');
 	secondItem.setFlag = async (scope, key, value) => {
 		fx.mergeObject(secondItem._source, { [`flags.${scope}.${key}`]: value });
 	};
-	fx.game.packs.set('world.arbitrary-name', {
-		collection: 'world.arbitrary-name', documentName: 'Actor', metadata: { packageType: 'world' }, locked: false,
-		async getDocuments() { fx.events.push('load second actors'); return [secondActor]; },
-		configure() { assert.fail('compendium lock state was changed'); },
-	});
 	await fx.moveItem(fx.template, destination, fx.processor);
 	assert.equal(secondItem.getFlag('item-linking', 'baseItem'), fx.targetPack.getUuid('template'));
 	assert.equal(fx.actor.items.get('linked').getFlag('item-linking', 'baseItem'), fx.targetPack.getUuid('template'));
 	assert.equal(fx.events.filter((event) => event === 'load second actors').length, 1);
+});
+
+test('only archived actors whose summary lists the moved item are loaded', async () => {
+	const fx = await moveFixture();
+	const archive = actorPack(fx, 'world.archive', [
+		{ _id: 'holder', items: [inventoryItem('held')] },
+		{ _id: 'unrelated', items: [inventoryItem('other', 'another-uuid')] },
+		{ _id: 'empty', items: [] },
+	]);
+	archive.actors.get('holder').items.get('held').setFlag = async () => { fx.events.push('update held'); };
+	await fx.moveItem(fx.template, destination, fx.processor);
+	assert.deepEqual(archive.queries.map((ids) => [...ids]), [['holder']]);
+	assert(fx.events.includes('update held'));
+});
+
+test('never-synced archived actors are loaded, relinked and get their summary repaired', async () => {
+	const fx = await moveFixture({ links: null });
+	await fx.moveItem(fx.template, destination, fx.processor);
+	assert.deepEqual(fx.events, ['load actors', 'sync stored-actor', 'create destination', 'update linked', 'delete source']);
+	assert.deepEqual([...fx.actor.flags['item-linking'].links], [oldUuid]);
+	assert.equal(fx.actor.items.get('linked').getFlag('item-linking', 'baseItem'), fx.targetPack.getUuid('template'));
+});
+
+test('archived actors already in the pack cache are reused instead of reloaded', async () => {
+	const fx = await moveFixture();
+	fx.pack.cache.set(fx.actor.id, fx.actor);
+	fx.pack.getDocuments = () => assert.fail('cached actor was reloaded');
+	await fx.moveItem(fx.template, destination, fx.processor);
+	assert.equal(fx.actor.items.get('linked').getFlag('item-linking', 'baseItem'), fx.targetPack.getUuid('template'));
 });
 
 test('a pack locked after scanning aborts relinking without unlocking it or deleting the source', async () => {

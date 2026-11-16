@@ -38,7 +38,9 @@ async function archiveFixture() {
 	fx.addPack = (collection, sources, { documentName = 'Actor', packageType = 'world', locked = false } = {}) => {
 		const pack = {
 			collection, documentName, locked, title: collection, metadata: { packageType },
-			actors: new Map(), index: new Map(),
+			actors: new Map(), index: new Map(), cache: new Map(),
+			has: (id) => pack.cache.has(id),
+			get: (id) => pack.cache.get(id),
 			async getIndex({ fields }) { events.push(`index ${collection}: ${fields}`); return pack.index; },
 			async getDocuments(query = {}) {
 				const ids = query._id__in ?? [...pack.actors.keys()];

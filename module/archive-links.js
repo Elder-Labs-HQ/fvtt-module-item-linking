@@ -80,6 +80,27 @@ export function countArchived() {
 }
 
 /**
+ * Loads the actors of an archive pack whose summary lists any of the base items, or that were
+ * never synced, and fixes their summaries along the way. Actors already in the pack cache are
+ * reused instead of reloaded: reloading replaces the cached instance, which detaches open sheets.
+ * @param {CompendiumCollection} pack - A world Actor compendium.
+ * @param {Set<string>} baseUuids - The base item UUIDs to look for.
+ * @returns {Promise<Actor[]>} The candidate actors.
+ */
+export async function loadArchivedActors(pack, baseUuids) {
+	const ids = [...pack.index.values()]
+		.filter((entry) => storedLinks(entry)?.some((uuid) => baseUuids.has(uuid)) ?? true)
+		.map((entry) => entry._id);
+	if (!ids.length) return [];
+	const cached = ids.filter((id) => pack.has(id)).map((id) => pack.get(id));
+	const missing = ids.filter((id) => !pack.has(id));
+	const loaded = missing.length ? await pack.getDocuments({ _id__in: missing }) : [];
+	const actors = [...cached, ...loaded];
+	await syncActors(pack, actors);
+	return actors;
+}
+
+/**
  * Loads the archived actors that hold derivations of a base item, or were never synced,
  * and fixes their summaries along the way.
  * @returns {Promise<Item[]>} The archived items linked to the base item.
@@ -87,12 +108,7 @@ export function countArchived() {
 export async function findArchivedItems(baseUuid) {
 	const items = [];
 	for (const pack of archivePacks()) {
-		const ids = [...pack.index.values()]
-			.filter((entry) => storedLinks(entry)?.includes(baseUuid) ?? true)
-			.map((entry) => entry._id);
-		if (!ids.length) continue;
-		const actors = await pack.getDocuments({ _id__in: ids });
-		await syncActors(pack, actors);
+		const actors = await loadArchivedActors(pack, new Set([baseUuid]));
 		for (const actor of actors) {
 			items.push(...linkedItems(actor).filter((i) => getFlag(i, 'baseItem') === baseUuid));
 		}
